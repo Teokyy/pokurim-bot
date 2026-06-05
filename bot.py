@@ -36,6 +36,11 @@ def load_data():
     return {}
 
 def save_data(data):
+    # Автоматически создаем папку для файла, если её еще нет (например, /data/)
+    dir_name = os.path.dirname(DATA_FILE)
+    if dir_name and not os.path.exists(dir_name):
+        os.makedirs(dir_name, exist_ok=True)
+        
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
