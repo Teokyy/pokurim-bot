@@ -1,29 +1,33 @@
+import logging
 import asyncio
 import platform
-
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(
-        asyncio.WindowsSelectorEventLoopPolicy()
-    )
 import os
 import time
+import json
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 )
-import json
-from datetime import datetime
 
-BOT_TOKEN = "8690003152:AAEg4RBIqYy_bId65l0pwaz6SrwonlyoUI8"
-ADMIN_ID = 1320584749
-DATA_FILE = "users.json"
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8690003152:AAEg4RBIqYy_bId65l0pwaz6SrwonlyoUI8")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "1320584749"))
+DATA_FILE = os.environ.get("DATA_FILE", "users.json")
 WAITING_FOR_SUBMISSION = 1
 
 SHOPS = ["Сахарова 53", "Парина 33", "Ландау 45", "Сахарова 95"]
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# ─── ДАННЫЕ ──────────────────────────────────────────────────────────────────
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -41,6 +45,8 @@ def get_user(data, user_id):
         data[uid] = {"discount": 0, "submissions": [], "name": "", "shop": None}
     return data[uid]
 
+# ─── КЛАВИАТУРЫ ──────────────────────────────────────────────────────────────
+
 def get_user_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton("📸 Отправить чек"), KeyboardButton("📊 Моя статистика")],
@@ -57,6 +63,8 @@ def get_admin_keyboard():
 def get_shop_keyboard():
     keyboard = [[InlineKeyboardButton(shop, callback_data=f"choose_shop|{shop}")] for shop in SHOPS]
     return InlineKeyboardMarkup(keyboard)
+
+# ─── СТАРТ ───────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -112,6 +120,8 @@ async def choose_shop_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_user_keyboard()
     )
 
+# ─── СТАТИСТИКА ──────────────────────────────────────────────────────────────
+
 async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     u = get_user(data, update.effective_user.id)
@@ -149,6 +159,8 @@ async def my_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             icon, status = "❓", s["status"]
         text += f"{icon} {s['date']} — {status}\n"
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_user_keyboard())
+
+# ─── ИСПОЛЬЗОВАНИЕ СКИДКИ ─────────────────────────────────────────────────────
 
 async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -189,19 +201,15 @@ async def redeem_confirm_user(update: Update, context: ContextTypes.DEFAULT_TYPE
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
-            f"🎯 *Запрос на использование скидки*\n\n"
-            f"👤 {u.get('name', '?')}\n"
-            f"🆔 `{user_id}`\n"
-            f"💳 Скидка: *{discount}%*\n\n"
-            f"Подтверди что скидка была использована в «Апекс Симрейсинг»:"
+            f"Запрос на использование скидки\n\n"
+            f"Пользователь: {u.get('name', '?')}\n"
+            f"ID: {user_id}\n"
+            f"Скидка: {discount}%\n\n"
+            f"Подтверди что скидка была использована в Апекс Симрейсинг:"
         ),
-        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    await query.edit_message_text(
-        "✅ *Запрос отправлен!*\n\nАдминистратор подтвердит использование скидки.",
-        parse_mode="Markdown"
-    )
+    await query.edit_message_text("✅ Запрос отправлен! Администратор подтвердит использование скидки.")
 
 async def redeem_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -222,8 +230,7 @@ async def redeem_admin_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ Скидка {old_discount}% использована. Пользователь {user_id} начинает новый цикл.")
     await context.bot.send_message(
         chat_id=int(user_id),
-        text=f"🎉 *Скидка {old_discount}% успешно использована!*\n\nТвой счётчик обнулён — начинай накапливать!\nОтправляй чеки через 📸 🏁",
-        parse_mode="Markdown"
+        text=f"Скидка {old_discount}% успешно использована!\n\nТвой счётчик обнулён — начинай накапливать!\nОтправляй чеки через 📸",
     )
 
 async def redeem_admin_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,20 +242,21 @@ async def redeem_admin_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"❌ Использование скидки отклонено для {user_id}.")
     await context.bot.send_message(
         chat_id=int(user_id),
-        text="❌ *Использование скидки отклонено.*\n\nОбратитесь к администратору.",
-        parse_mode="Markdown"
+        text="❌ Использование скидки отклонено. Обратитесь к администратору."
     )
+
+# ─── ОТПРАВКА ЧЕКА ───────────────────────────────────────────────────────────
 
 async def submit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = load_data()
     u = get_user(data, user.id)
     if not u.get("shop"):
-        await update.message.reply_text("❗ Сначала выбери свой магазин:", reply_markup=get_shop_keyboard())
+        await update.message.reply_text("Сначала выбери свой магазин:", reply_markup=get_shop_keyboard())
         return ConversationHandler.END
     await update.message.reply_text(
         "📋 *Отправка чека*\n\n"
-        "Пришли фото чека (можно с подписью).\n\n"
+        "Пришли фото чека.\n\n"
         "Или отправь /cancel для отмены.",
         parse_mode="Markdown"
     )
@@ -258,17 +266,14 @@ async def receive_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message = update.message
     user = update.effective_user
     if not message.photo:
-        await message.reply_text("❌ Нужно отправить *фото чека*.", parse_mode="Markdown")
+        await message.reply_text("❌ Нужно отправить фото чека.")
         return WAITING_FOR_SUBMISSION
     data = load_data()
     u = get_user(data, user.id)
     new_file_id = message.photo[-1].file_id
     for s in u["submissions"]:
         if s["file_id"] == new_file_id and s["status"] != "rejected":
-            await message.reply_text(
-                "❌ *Этот чек уже был отправлен ранее.*",
-                parse_mode="Markdown", reply_markup=get_user_keyboard()
-            )
+            await message.reply_text("❌ Этот чек уже был отправлен ранее.", reply_markup=get_user_keyboard())
             return ConversationHandler.END
     caption = message.caption or ""
     shop = u.get("shop", "Не указан")
@@ -287,31 +292,47 @@ async def receive_submission(update: Update, context: ContextTypes.DEFAULT_TYPE)
     u["submissions"].append(submission)
     save_data(data)
     await message.reply_text(
-        f"✅ *Заявка принята!*\n\n🏪 Магазин: *{shop}*\n\nАдминистратор проверит чек и начислит скидку.\n\nЕсть ещё чек? Нажми 📸",
-        parse_mode="Markdown", reply_markup=get_user_keyboard()
+        f"✅ Заявка принята!\n\nМагазин: {shop}\n\nАдминистратор проверит чек и начислит скидку.\n\nЕсть ещё чек? Нажми 📸",
+        reply_markup=get_user_keyboard()
     )
     keyboard = [[
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve|{submission_id}|{user.id}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject|{submission_id}|{user.id}")
     ]]
-    await context.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=new_file_id,
-        caption=(
-            f"📥 Новая заявка\n\n"
-            f"👤 {user.full_name}\n"
-            f"@{user.username or '—'}\n"
-            f"ID: {user.id}\n"
-            f"🏪 Магазин: {shop}\n"
-            f"📅 {submission['date']}"
-        ),
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=new_file_id,
+            caption=(
+                f"Новая заявка\n\n"
+                f"Пользователь: {user.full_name}\n"
+                f"@{user.username or '—'}\n"
+                f"ID: {user.id}\n"
+                f"Магазин: {shop}\n"
+                f"Дата: {submission['date']}"
+            ),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки фото админу: {e}")
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"Новая заявка (фото не прикрепилось)\n\n"
+                f"Пользователь: {user.full_name}\n"
+                f"ID: {user.id}\n"
+                f"Магазин: {shop}\n"
+                f"Дата: {submission['date']}"
+            ),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отменено.", reply_markup=get_user_keyboard())
     return ConversationHandler.END
+
+# ─── ОБРАБОТКА КНОПОК ADMIN ──────────────────────────────────────────────────
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -326,24 +347,39 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     u = get_user(data, user_id)
     submission = next((s for s in u["submissions"] if s["id"] == submission_id), None)
     if not submission:
-        await query.edit_message_caption("⚠️ Заявка не найдена.")
+        try:
+            await query.edit_message_caption("Заявка не найдена.")
+        except:
+            await query.edit_message_text("Заявка не найдена.")
         return
     if submission["status"] != "pending":
-        await query.edit_message_caption(f"ℹ️ Уже обработана: {submission['status']}")
+        try:
+            await query.edit_message_caption(f"Уже обработана: {submission['status']}")
+        except:
+            await query.edit_message_text(f"Уже обработана: {submission['status']}")
         return
     if action == "approve":
         u["discount"] = min(25, u["discount"] + 2)
         submission["status"] = "approved"
         save_data(data)
-        await query.edit_message_caption(f"✅ Подтверждено\n🏪 {submission.get('shop','?')}\n💳 Новая скидка: {u['discount']}%")
+        try:
+            await query.edit_message_caption(
+                f"Подтверждено\nМагазин: {submission.get('shop','?')}\nНовая скидка: {u['discount']}%"
+            )
+        except:
+            await query.edit_message_text(
+                f"Подтверждено\nМагазин: {submission.get('shop','?')}\nНовая скидка: {u['discount']}%"
+            )
         await context.bot.send_message(
             chat_id=int(user_id),
-            text=f"🎉 *Чек подтверждён!*\n\n💳 Ваша скидка: *{u['discount']}%*\n\nЕсть ещё чек? Нажми 📸",
-            parse_mode="Markdown"
+            text=f"Чек подтверждён!\n\nВаша скидка: {u['discount']}%\n\nЕсть ещё чек? Нажми 📸"
         )
     elif action == "reject":
         context.user_data["pending_reject"] = {"submission_id": submission_id, "user_id": user_id}
-        await query.edit_message_caption("✏️ Напиши причину отклонения следующим сообщением:")
+        try:
+            await query.edit_message_caption("Напиши причину отклонения следующим сообщением:")
+        except:
+            await query.edit_message_text("Напиши причину отклонения следующим сообщением:")
 
 async def reject_reason_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -351,7 +387,8 @@ async def reject_reason_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if "pending_reject" not in context.user_data:
         return
     reason = update.message.text
-    if reason in ["📊 Статистика", "⏳ Ожидающие чеки", "👥 Пользователи", "🏆 Конкурс магазинов", "📢 Рассылка"]:
+    admin_buttons = ["📊 Статистика", "⏳ Ожидающие чеки", "👥 Пользователи", "🏆 Конкурс магазинов", "📢 Рассылка"]
+    if reason in admin_buttons:
         return
     submission_id = context.user_data["pending_reject"]["submission_id"]
     user_id = context.user_data["pending_reject"]["user_id"]
@@ -360,7 +397,7 @@ async def reject_reason_handler(update: Update, context: ContextTypes.DEFAULT_TY
     u = get_user(data, user_id)
     submission = next((s for s in u["submissions"] if s["id"] == submission_id), None)
     if not submission:
-        await update.message.reply_text("⚠️ Заявка не найдена.")
+        await update.message.reply_text("Заявка не найдена.")
         return
     submission["status"] = "rejected"
     submission["reject_reason"] = reason
@@ -368,9 +405,10 @@ async def reject_reason_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("❌ Отклонено. Причина отправлена пользователю.", reply_markup=get_admin_keyboard())
     await context.bot.send_message(
         chat_id=int(user_id),
-        text=f"❌ *Чек не подтверждён.*\n\n📝 Причина: {reason}\n\nЕсть другой чек? Нажми 📸",
-        parse_mode="Markdown"
+        text=f"❌ Чек не подтверждён.\n\nПричина: {reason}\n\nЕсть другой чек? Нажми 📸"
     )
+
+# ─── АДМИН ПАНЕЛЬ ────────────────────────────────────────────────────────────
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -426,17 +464,20 @@ async def admin_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve|{s['id']}|{uid}"),
                     InlineKeyboardButton("❌ Отклонить", callback_data=f"reject|{s['id']}|{uid}")
                 ]]
-                await context.bot.send_photo(
-                    chat_id=ADMIN_ID,
-                    photo=s["file_id"],
-                    caption=(
-                        f"⏳ Ожидает подтверждения\n\n"
-                        f"👤 {s['user_name']}\n"
-                        f"🏪 {s.get('shop','Не указан')}\n"
-                        f"📅 {s['date']}"
-                    ),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+                try:
+                    await context.bot.send_photo(
+                        chat_id=ADMIN_ID,
+                        photo=s["file_id"],
+                        caption=(
+                            f"Ожидает подтверждения\n\n"
+                            f"Пользователь: {s['user_name']}\n"
+                            f"Магазин: {s.get('shop','Не указан')}\n"
+                            f"Дата: {s['date']}"
+                        ),
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка отправки фото: {e}")
     if not found:
         await update.message.reply_text("✅ Нет чеков ожидающих подтверждения.", reply_markup=get_admin_keyboard())
 
@@ -453,7 +494,13 @@ async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending = len([s for s in u["submissions"] if s["status"] == "pending"])
         shop = u.get("shop", "—")
         text += f"👤 {u.get('name','?')} | {uid}\n🏪 {shop} | 💳 {u['discount']}% | ✅ {approved} | ⏳ {pending}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+    # Разбиваем на части если длинный
+    if len(text) > 4000:
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
 
 async def admin_set_discount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -471,7 +518,7 @@ async def admin_set_discount(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_data(data)
     await update.message.reply_text(f"✅ Скидка {user_id} = {percent}%", reply_markup=get_admin_keyboard())
     try:
-        await context.bot.send_message(chat_id=int(user_id), text=f"🎉 Ваша скидка: *{percent}%*", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=int(user_id), text=f"Ваша скидка обновлена: {percent}%")
     except:
         pass
 
@@ -491,6 +538,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             failed += 1
     await update.message.reply_text(f"✅ Отправлено: {success}\n❌ Не доставлено: {failed}", reply_markup=get_admin_keyboard())
+
+# ─── ТЕКСТОВЫЕ КНОПКИ ────────────────────────────────────────────────────────
 
 async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -518,16 +567,23 @@ async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif text == "📋 История чеков":
             await my_history(update, context)
 
+# ─── ЗАПУСК ──────────────────────────────────────────────────────────────────
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("submit", submit_start),
-            MessageHandler(filters.TEXT & filters.Regex("^📸 Отправить чек$") & ~filters.User(ADMIN_ID), submit_start)
+            MessageHandler(
+                filters.TEXT & filters.Regex("^📸 Отправить чек$") & ~filters.User(ADMIN_ID),
+                submit_start
+            )
         ],
         states={WAITING_FOR_SUBMISSION: [MessageHandler(filters.PHOTO, receive_submission)]},
         fallbacks=[CommandHandler("cancel", cancel)]
     )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("mystatus", my_status))
     app.add_handler(CommandHandler("history", my_history))
@@ -546,14 +602,14 @@ def main():
     app.add_handler(CallbackQueryHandler(redeem_admin_no, pattern="^redeem_admin_no\\|"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_buttons))
-    print("Покурим бот запущен...")
-    app.run_polling()
+
+    print("Покурим бот запущен!")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     while True:
         try:
-            asyncio.set_event_loop(asyncio.new_event_loop())
             main()
         except Exception as e:
-            print(f"Ошибка: {e}. Перезапуск через 5 секунд...")
+            logger.error(f"Ошибка: {e}. Перезапуск через 5 секунд...")
             time.sleep(5)
